@@ -5,6 +5,7 @@ from scipy.optimize import brentq
 from brentq_array import brentq_array
 
 
+# TODO: add a few more test cases and functions...
 def f(x, a):
     return x - a
 

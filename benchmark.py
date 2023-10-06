@@ -7,7 +7,7 @@ from scipy.optimize import brentq
 
 from brentq_array import brentq_array
 
-n_pix = 2 ** np.arange(18)
+n_pix = 2 ** np.arange(23)
 
 
 def f(x, a):
