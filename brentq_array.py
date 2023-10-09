@@ -1,6 +1,7 @@
 # This is a vectorised version of Brent's method
 
 from numpy import array_api as xp
+import torch
 
 def interpolate(fpre, fcur, xpre, xcur):
     """Interpolate."""
@@ -89,3 +90,91 @@ def brentq_array(f, xa, xb, args=(), xtol=2e-12, rtol=1e-15, maxiter=100):
         fcur = f(xcur, *args)
 
     return xcur, n_iter, converged
+
+
+def brentq_array_torch(f, xa, xb, args=(), xtol=2e-12, rtol=1e-15, maxiter=100):
+    """Element wise Brent's method."""
+    # adapted from https://github.com/scipy/scipy/blob/v1.11.3/scipy/optimize/Zeros/brentq.c
+    # this is really ugly, but it works
+
+    if xa.shape != xb.shape:
+        raise ValueError("a and b must have the same shape")
+
+    xpre, xcur = xa, xb
+
+    fpre, fcur = f(xpre, *args), f(xcur, *args)
+
+    n_iter = torch.zeros(xa.shape, dtype=torch.int32)
+    xblk = torch.zeros(xa.shape, dtype=xa.dtype)
+    fblk = torch.zeros(xa.shape, dtype=xa.dtype)
+    spre = torch.zeros(xa.shape, dtype=xa.dtype)
+    scur = torch.zeros(xa.shape, dtype=xa.dtype)
+
+    if xa.shape != fpre.shape:
+        raise ValueError("a and f(a) must have the same shape")
+
+    # Check if the root is bracketed for all elements
+    if torch.any(fpre * fcur >= 0):
+        raise ValueError("f(a) and f(b) must have opposite signs in all elements")
+
+    # If any of these is already zero, there is nothing to do...
+    converged = (fpre == 0) | (fcur == 0)
+
+    for _ in range(maxiter):
+        n_iter[~converged] += 1
+
+        condition = (fpre != 0) & (fcur != 0) & (fpre * fcur < 0)
+        xblk[condition] = xpre[condition]
+        fblk[condition] = fpre[condition]
+        spre[condition] = scur[condition] = xcur[condition] - xpre[condition]
+
+        condition = torch.abs(fblk) < torch.abs(fcur)
+        xpre[condition] = xcur[condition]
+        xcur[condition] = xblk[condition]
+        xblk[condition] = xpre[condition]
+
+        fpre[condition] = fcur[condition]
+        fcur[condition] = fblk[condition]
+        fblk[condition] = fpre[condition]
+
+        delta = (xtol + rtol * torch.abs(xcur)) / 2.0
+        sbis = (xblk - xcur) / 2.0
+
+        condition = (fcur == 0) | (torch.abs(sbis) < delta)
+        converged[condition] = True
+
+        if torch.all(converged):
+            break
+
+        condition = (torch.abs(spre) > delta) & (torch.abs(fcur) < torch.abs(fpre))
+        interp = condition & (xpre == xblk)
+        stry = torch.where(
+            interp,
+            interpolate(fpre, fcur, xpre, xcur),
+            extrapolate(fpre, fcur, fblk, xpre, xcur, xblk),
+        )
+
+        bisect = condition & (
+            2 * torch.abs(stry)
+            < torch.min(
+                torch.stack([torch.abs(spre), 3 * torch.abs(sbis) - delta]), dim=0
+            ).values
+        )
+        spre = torch.where(bisect, scur, sbis)
+        scur = torch.where(bisect, stry, sbis)
+
+        spre[~condition] = sbis[~condition]
+        scur[~condition] = stry[~condition]
+
+        xpre, fpre = xcur, fcur
+
+        condition = (torch.abs(scur) > delta) & ~converged
+        xcur[condition] += scur[condition]
+        xcur[~condition] += torch.where(
+            sbis[~condition] > 0, delta[~condition], -delta[~condition]
+        )
+
+        fcur = f(xcur, *args)
+
+    return xcur, n_iter, converged
+
